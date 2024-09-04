@@ -1,0 +1,142 @@
+version: '3.8'  # Specifies the Docker Compose file format version
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest  # Zookeeper image from Bitnami
+    container_name: payment-assignment-zookeeper-1  # Assigns a custom container name
+    ports:
+      - "2181:2181"  # Exposes Zookeeper on port 2181
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes  # Allows anonymous login to Zookeeper
+      - ZOO_SERVER_ID=1  # Sets the server ID for Zookeeper
+      - ZOO_SERVERS=payment-assignment-zookeeper-1:2888:3888  # Defines the server in the ensemble
+    networks:
+      - kafka-net  # Attaches Zookeeper to the Kafka network
+    healthcheck:  # Configures health checks for Zookeeper
+      test: ["CMD", "zkServer.sh", "status"]  # Checks if Zookeeper server is running
+      interval: 30s  # Health check interval
+      timeout: 10s  # Timeout for each health check attempt
+      retries: 5  # Number of retries before marking as unhealthy
+      start_period: 40s  # Grace period before starting health checks
+
+  kafka:
+    image: bitnami/kafka:latest  # Kafka image from Bitnami
+    container_name: payment-assignment-kafka-1  # Assigns a custom container name
+    ports:
+      - "9092:9092"  # Exposes Kafka on port 9092
+    environment:
+      - KAFKA_BROKER_ID=1  # Sets Kafka broker ID
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092  # Listens on all interfaces
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://payment-assignment-kafka-1:9092  # Advertises the broker address to clients
+      - KAFKA_ZOOKEEPER_CONNECT=payment-assignment-zookeeper-1:2181  # Connects Kafka to Zookeeper
+      - ALLOW_PLAINTEXT_LISTENER=yes  # Allows plaintext listener
+    depends_on:  # Ensures Kafka starts after Zookeeper is healthy
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches Kafka to the Kafka network
+    healthcheck:  # Configures health checks for Kafka
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server payment-assignment-kafka-1:9092 --list || exit 1"]  # Checks if Kafka topics can be listed
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  kafka-rest-proxy:
+    image: confluentinc/cp-kafka-rest:latest  # REST Proxy for Kafka by Confluent
+    container_name: kafka-rest-proxy  # Assigns a custom container name
+    ports:
+      - "8082:8082"  # Exposes REST Proxy on port 8082
+    environment:
+      KAFKA_REST_HOST_NAME: kafka-rest-proxy  # Sets REST Proxy hostname
+      KAFKA_REST_LISTENERS: http://0.0.0.0:8082  # Configures listeners for REST Proxy
+      KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://payment-assignment-kafka-1:9092  # Sets Kafka bootstrap servers for REST Proxy
+    depends_on:  # Ensures REST Proxy starts after Kafka is healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches REST Proxy to the Kafka network
+
+  kafka-producer:
+    build:
+      context: ./event-bus/kafka-producer  # Builds Kafka producer service from local directory
+    container_name: kafka-producer  # Assigns a custom container name
+    environment:
+      - KAFKA_BROKER=payment-assignment-kafka-1:9092  # Kafka broker address
+      - KAFKA_TOPIC=user-events  # Kafka topic to produce events to
+    depends_on:  # Ensures Kafka producer starts after Kafka is healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches Kafka producer to the Kafka network
+
+  kafka-consumer:
+    build:
+      context: ./event-bus/kafka-consumer  # Builds Kafka consumer service from local directory
+    container_name: kafka-consumer  # Assigns a custom container name
+    environment:
+      - KAFKA_BROKER=payment-assignment-kafka-1:9092  # Kafka broker address
+      - KAFKA_TOPIC=user-events  # Kafka topic to consume events from
+    depends_on:  # Ensures Kafka consumer starts after Kafka is healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches Kafka consumer to the Kafka network
+
+  order-service:
+    build:
+      context: ./order-service  # Builds order service from local directory
+    container_name: order-service  # Assigns a custom container name
+    ports:
+      - "3001:3000"  # Exposes order service on port 3001
+    environment:
+      - MONGO_URI=mongodb://payment-assignment-mongo:27017/orderdb  # MongoDB connection string
+      - KAFKA_BROKER=payment-assignment-kafka-1:9092  # Kafka broker address
+      - KAFKA_TOPIC=order-events  # Kafka topic for order events
+    depends_on:  # Ensures order service starts after Kafka and MongoDB are healthy
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches order service to the Kafka network
+
+  user-service:
+    build:
+      context: ./user-service  # Builds user service from local directory
+    container_name: user-service  # Assigns a custom container name
+    ports:
+      - "3000:3000"  # Exposes user service on port 3000
+    environment:
+      - MONGO_URI=mongodb://root:yourpassword@payment-assignment-mongo:27017/userdb?authSource=admin  # MongoDB connection string with authentication
+      - KAFKA_BROKER=payment-assignment-kafka-1:9092  # Kafka broker address
+      - KAFKA_TOPIC=user-events  # Kafka topic for user events
+    depends_on:  # Ensures user service starts after Kafka and MongoDB are healthy
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    networks:
+      - kafka-net  # Attaches user service to the Kafka network
+
+  mongo:
+    image: mongo:latest  # MongoDB image from Docker Hub
+    container_name: payment-assignment-mongo  # Assigns a custom container name
+    ports:
+      - "27017:27017"  # Exposes MongoDB on port 27017
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root  # MongoDB root username
+      - MONGO_INITDB_ROOT_PASSWORD=yourpassword  # MongoDB root password
+    command: --bind_ip_all  # Allows MongoDB to accept connections from any IP
+    networks:
+      - kafka-net  # Attaches MongoDB to the Kafka network
+    healthcheck:  # Configures health checks for MongoDB
+      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' || exit 1"]  # Checks if MongoDB is responsive
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+networks:
+  kafka-net:
+    driver: bridge  # Creates a custom bridge network named kafka-net

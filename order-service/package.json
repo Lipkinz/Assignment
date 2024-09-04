@@ -1,0 +1,18 @@
+{
+    "name": "order-service",
+    "version": "1.0.0",
+    "description": "Order Service for Payment Assignment Project",
+    "main": "src/index.js",
+    "scripts": {
+      "start": "node src/index.js",
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "dependencies": {
+      "express": "^4.18.2",
+      "mongoose": "^6.3.3",
+      "kafkajs": "^1.15.0"
+    },
+    "author": "Tomer Kanelstein",
+    "license": "ISC"
+  }
+  

@@ -1,0 +1,13 @@
+# Ignore environment files
+.env
+
+# Ignore sensitive configuration files
+*.env
+config/*.json
+
+# Ignore sensitive data and credentials
+docker-compose.override.yml
+
+# Ignore node modules and logs
+node_modules/
+logs/
